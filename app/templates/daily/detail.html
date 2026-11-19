@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ station }} {{ biz_date }} · 日结明细</title>
+<link rel="stylesheet" href="/static/theme.css">
+<link rel="stylesheet" href="/static/layout.css">
+<link rel="stylesheet" href="/static/billing.css">
+<link rel="stylesheet" href="/static/daily.css">
+<script src="/static/daily.js" defer></script>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <a class="logo" href="/daily">按日日结<span>DAILY SETTLEMENT</span></a>
+    <div class="station-label">四方对账与版本轨迹</div>
+    <nav>
+      <a href="/daily"><small>01</small>日结台账</a>
+      <a class="selected" href="#"><small>02</small>站日明细</a>
+    </nav>
+  </aside>
+  <div class="work">
+    <header class="topbar">
+      <h1>{{ station }} · {{ biz_date }}</h1>
+      <span>当前 V{{ record.version if record else '—' }}</span>
+      <a class="btn" href="/daily">返回台账</a>
+    </header>
+    <main class="content">
+      {% if record %}
+      <div class="kpis">
+        <div class="kpi"><small>状态</small><b style="font-size:14px">{{ record.status }}</b><em>{{ record.review }}</em></div>
+        <div class="kpi"><small>总表 kWh</small><b>{{ record.meter_kwh if record.meter_kwh is not none else '未回传' }}</b><em>meter</em></div>
+        <div class="kpi"><small>订单 kWh</small><b>{{ record.order_kwh if record.order_kwh is not none else '—' }}</b><em>{{ record.order_count }} 单</em></div>
+        <div class="kpi"><small>客户损耗 kWh</small><b>{{ record.customer_loss_kwh if record.customer_loss_kwh is not none else '未确认' }}</b><em>不混入辅助</em></div>
+        <div class="kpi"><small>待补辅助 kWh</small><b>{{ record.pending_aux_kwh if record.pending_aux_kwh is not none else '—' }}</b><em>未回传挂账</em></div>
+      </div>
+
+      <div class="double">
+        <section class="panel">
+          <div class="panel__head"><h2>四方对账</h2><span>{{ record.reconcile.identity }}</span></div>
+          <table class="ledger">
+            <thead><tr><th>项目</th><th>电量 kWh</th><th>核对</th><th>说明</th></tr></thead>
+            <tbody>
+            {% for c in record.reconcile.checks %}
+              <tr>
+                <td>{{ c.item }}</td>
+                <td class="num {{ 'miss' if c.kwh is none }}">{{ c.kwh if c.kwh is not none else '未回传/未确认' }}</td>
+                <td><span class="badge badge-{{ 'ok' if c.pass else 'bad' }}">{{ '通过' if c.pass else '待补/异常' }}</span></td>
+                <td>{{ c.note }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          <div class="identity {{ 'ok' if record.reconcile.identity_pass else 'bad' }}">
+            恒等式校验：{{ '平衡 ✓' if record.reconcile.identity_pass else '不平衡（异常站日不参与结算）' }}
+          </div>
+          {% if record.codes %}
+          <div class="codes">
+            <b>原因码：</b>
+            {% for c in record.codes %}<span class="code-chip">{{ c.code }} · {{ c.reason }}</span>{% endfor %}
+          </div>
+          {% endif %}
+          <div class="codes"><b>来源行：</b>{{ record.source_lines|join(', ') }}</div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__head"><h2>复核与解锁</h2><span>已复核即锁定，导入不覆盖</span></div>
+          <form id="review-form" data-station="{{ station }}" data-date="{{ biz_date }}" data-version="{{ record.version }}">
+            <label>复核结论
+              <select name="decision">
+                <option value="通过">通过（锁定当前版本）</option>
+                <option value="退回">退回（保留待复核）</option>
+              </select>
+            </label>
+            <label>备注（可选）<input name="note" placeholder="如：辅助表已补，核对一致"></label>
+            <button class="btn solid" type="submit">提交复核（V{{ record.version }}）</button>
+          </form>
+          <form id="reopen-form" data-station="{{ station }}" data-date="{{ biz_date }}" style="border-top:1px solid var(--line)">
+            <label>解锁后才允许补数覆盖当前版本</label>
+            <button class="btn" type="submit">解锁待复核</button>
+          </form>
+          <div id="feedback" role="status" aria-live="polite"></div>
+        </section>
+      </div>
+
+      <section class="panel" style="margin-top:12px">
+        <div class="panel__head"><h2>版本轨迹（补数追溯）</h2><span>旧版本永久保留</span></div>
+        <div class="table-viewport" style="max-height:280px">
+          <table class="ledger">
+            <thead><tr><th>版本</th><th>状态</th><th>复核</th><th>生成时间 UTC</th><th>字段变化</th></tr></thead>
+            <tbody>
+            {% for v in versions %}
+              <tr>
+                <td>V{{ v.version }}</td>
+                <td>{{ v.status }}</td>
+                <td>{{ v.review }}</td>
+                <td>{{ v.created[:19] }}</td>
+                <td>
+                  {% if v.changes %}
+                    {% for ch in v.changes %}<span class="code-chip">{{ ch.label }}: {{ ch.old }} → {{ ch.new }}</span>{% endfor %}
+                  {% else %}<span class="muted">首版</span>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% else %}
+      <section class="panel"><div class="panel__head"><h2>该站日暂无日结</h2></div>
+        <p style="padding:16px">请先在 <a href="/daily">日结台账</a> 导入对应数据。</p></section>
+      {% endif %}
+    </main>
+    <footer class="statusbar"><span>{{ station }} / {{ biz_date }}</span><span>复核乐观锁 · 陈旧提交返回 409</span></footer>
+  </div>
+</div>
+</body>
+</html>

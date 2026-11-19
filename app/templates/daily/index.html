@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>按站按日日结 · 充电结算</title>
+<link rel="stylesheet" href="/static/theme.css">
+<link rel="stylesheet" href="/static/layout.css">
+<link rel="stylesheet" href="/static/billing.css">
+<link rel="stylesheet" href="/static/daily.css">
+<script src="/static/daily.js" defer></script>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <a class="logo" href="/daily">按日日结<span>DAILY SETTLEMENT</span></a>
+    <div class="station-label">总表 / 订单 / 客户损耗 / 站方辅助 四方对账</div>
+    <nav>
+      <a class="selected" href="/daily"><small>01</small>日结台账</a>
+      <a href="/"><small>02</small>分时电费账（M1–M7）</a>
+    </nav>
+    <div class="rail-meta">
+      <b id="rail-count">{{ rows|length }}</b> 站日<br>
+      待补与未知不作零，单独交代
+    </div>
+  </aside>
+  <div class="work">
+    <header class="topbar">
+      <h1>按站按日可结算日结</h1>
+      <span>规则版本 2026.11.19-daily-v1</span>
+      <a class="btn" href="/api/daily/export.csv">导出台账 CSV</a>
+    </header>
+    <main class="content">
+      <div class="kpis">
+        <div class="kpi"><small>当前站日</small><b id="kpi-rows">{{ rows|length }}</b><em>条</em></div>
+        <div class="kpi"><small>待补辅助</small><b id="kpi-pending">{{ rows|selectattr('status','equalto','可结算-待补辅助')|list|length }}</b><em>条</em></div>
+        <div class="kpi"><small>异常不可结算</small><b id="kpi-blocked">{{ rows|selectattr('status','equalto','异常-不可结算')|list|length }}</b><em>条</em></div>
+        <div class="kpi"><small>已复核</small><b id="kpi-reviewed">{{ rows|rejectattr('review','equalto','待复核')|list|length }}</b><em>条</em></div>
+        <div class="kpi"><small>批次</small><b>{{ batches|length }}</b><em>个</em></div>
+      </div>
+
+      <div class="split-workbench">
+        <section class="panel">
+          <div class="panel__head"><h2>导入日结数据</h2><span>meter/order/aux 三类读数</span></div>
+          <form id="daily-form">
+            <label>CSV 文本（UTF-8 BOM / GB18030）
+              <textarea name="text" id="daily-text">{{ sample }}</textarea>
+            </label>
+            <div class="control-grid">
+              <label>或上传文件<input type="file" name="file" accept=".csv,text/csv"></label>
+              <label>模式
+                <select name="mode">
+                  <option value="run">计算并保存（可追溯）</option>
+                  <option value="preview">仅预览（不落库）</option>
+                </select>
+              </label>
+            </div>
+            <button class="btn solid" type="submit">生成日结</button>
+          </form>
+          <div class="legend">
+            <b>口径</b>
+            <p><i class="dot dot-miss"></i>未回传：显式标注“未回传”，<u>绝不作零</u>；待补日全部差额挂“待补辅助”，不确认客户损耗。</p>
+            <p><i class="dot dot-ok"></i>完整：总表 = 订单 + 客户损耗 + 站方辅助，恒等式通过后才落库。</p>
+            <p>不含停车服务费与需量电费。</p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__head">
+            <h2>日结台账（按站按日）</h2>
+            <span>点击行查看四方对账与版本轨迹</span>
+          </div>
+          <div class="filter-bar">
+            <input id="filter-station" placeholder="按站点筛选" value="{{ request.args.get('station','') }}">
+            <input id="filter-date" placeholder="按日期 YYYY-MM-DD" value="{{ request.args.get('biz_date','') }}">
+            <select id="filter-status">
+              <option value="">全部状态</option>
+              <option>可结算-完整</option>
+              <option>可结算-待补辅助</option>
+              <option>异常-不可结算</option>
+            </select>
+            <button class="btn" id="filter-btn" type="button">筛选</button>
+          </div>
+          <div class="table-viewport">
+            <table class="ledger daily-table">
+              <thead><tr>
+                <th>站点</th><th>业务日期</th><th>状态</th><th>总表</th><th>订单</th>
+                <th>站方辅助</th><th>客户损耗</th><th>待补辅助</th><th>差额</th>
+                <th>版本/复核</th>
+              </tr></thead>
+              <tbody id="daily-tbody">
+              {% for r in rows %}
+                <tr class="row-link" data-href="/daily/detail?station={{ r.station }}&biz_date={{ r.biz_date }}">
+                  <td>{{ r.station }}</td>
+                  <td>{{ r.biz_date }}</td>
+                  <td><span class="badge badge-{{ 'ok' if r.status=='可结算-完整' else ('pend' if r.status=='可结算-待补辅助' else 'bad') }}">{{ r.status }}</span></td>
+                  <td class="num">{{ r.meter_kwh if r.meter_kwh is not none else '未回传' }}</td>
+                  <td class="num">{{ r.order_kwh if r.order_kwh is not none else '缺订单' }}</td>
+                  <td class="num {{ 'miss' if r.aux_kwh is none }}">{{ r.aux_kwh if r.aux_kwh is not none else '未回传' }}</td>
+                  <td class="num {{ 'miss' if r.customer_loss_kwh is none }}">{{ r.customer_loss_kwh if r.customer_loss_kwh is not none else '未确认' }}</td>
+                  <td class="num {{ 'miss' if r.pending_aux_kwh and r.pending_aux_kwh != '0.000' }}">{{ r.pending_aux_kwh if r.pending_aux_kwh is not none else '—' }}</td>
+                  <td class="num">{{ r.gap_kwh if r.gap_kwh is not none else '—' }}</td>
+                  <td>V{{ r.version }} · {{ r.review[:6] }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="10">暂无日结，请在左侧导入数据生成。</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div id="feedback" role="status" aria-live="polite"></div>
+        </section>
+      </div>
+
+      <section class="panel" style="margin-top:12px">
+        <div class="panel__head"><h2>批次记录（补数可追溯）</h2><span>相同输入同日重跑不新增</span></div>
+        <div class="table-viewport" style="max-height:200px">
+          <table class="ledger">
+            <thead><tr><th>批次号</th><th>生成时间 UTC</th><th>输入行</th><th>站日行</th><th>隔离行</th></tr></thead>
+            <tbody>
+            {% for b in batches %}
+              <tr><td><code>{{ b.run_id[:16] }}</code></td><td>{{ b.created[:19] }}</td>
+              <td class="num">{{ b.input_count }}</td><td class="num">{{ b.row_count }}</td>
+              <td class="num">{{ b.quarantine_count }}</td></tr>
+            {% else %}<tr><td colspan="5">尚无批次。</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <footer class="statusbar">
+      <span>业务日期按 +08:00 自然日</span>
+      <span>未知不作零 · 已复核锁定 · 失败回滚旧版</span>
+    </footer>
+  </div>
+</div>
+</body>
+</html>
